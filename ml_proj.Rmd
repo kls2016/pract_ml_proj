@@ -1,0 +1,180 @@
+---
+title: "Analysis of Exercise Data"
+author: "Shishir K L"
+date: "May 28, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(dplyr)
+library(randomForest)
+```
+
+## Summary
+
+This work involves Analysis of the fitness data gathered using fitness tracking devices like *Nike Fuelband*, *FitBit*, etc. Even though these help people take measurements about their activity, these measurement only indicate the amount of activity and now how well an activity is done. Here, the idea is to use data from accelerometers on the belt, forearm, arm and dumbell of 6 participants. They are asked to perform barbell lifts correctly and incorrectly in 5 different ways and eventually, the way in which they did the exercise is predicted.
+
+3 different prediction algorithms are tried on the training and validation data and the best method is used on the test data.
+
+## Read and pre-process data
+
+### Read
+The training  and testing data are directly downloaded from the given URL and stored in *pml-training.csv* and *pml-testing.csv*
+
+The training set is further divided into training and validation sets, with 70% of the training data used for training. The training set is used to train for the different ML methods and the validation data is used to get their accuracy, etc.
+
+First, in order to get an idea of the data, the *str()* of the data is seen. This should give the variables and their types and the kind of values they hold. *str()* is commented here since it gives a very long output.
+
+
+```{r ml1, echo = TRUE}
+if(!file.exists("pml-training.csv"))
+{
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+                destfile = "pml-training.csv")
+}
+
+
+if(!file.exists("pml-testing.csv"))
+{
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+                destfile = "pml-testing.csv")
+}
+
+trainingData <- read.csv("pml-training.csv", header = TRUE, na.strings=c("NA","#DIV/0!",""))
+testData <- read.csv("pml-testing.csv", header = TRUE, na.strings=c("NA","#DIV/0!",""))
+
+
+inTrain <- createDataPartition(y = trainingData$X, p = 0.75, list = FALSE)
+trainData <- trainingData[inTrain, ]
+cvData <- trainingData[-inTrain, ]
+
+print(dim(trainingData))
+print(dim(trainData))
+print(dim(cvData))
+print(dim(testData))
+#str(trainData)
+```
+
+### Preprocess
+
+There are multiple variables in this dataset that might cause problems in our model-fitting and predictions. They are as below:
+
+1. A number of variables (columns) have lots of NAs. Further, these columns (Eg. kurtosis_ variables, pitch_ variables). These columns are not of use in our fitting of *classe* So, we first check for columns with a large percentage of NAs and remove them from the training, Validation and Test sets
+2. Many of the variables have almost same values across various measurements. Such variables do not add any data to our predictors. They are called near-zero variances. These can be removed and the dimention of our problem can be reduced. For this, the columns with near-zero variance are found and these columns are removed from all the data sets
+3. Finally, by seeing the data (say, using *edit*), we see that the first 6 columns (col *x* to col *num_window*), at least, are not useful. These are also removed.
+
+Once this pre-processing is done, we are ready for training, validation testing and prediction on the test set.
+
+The following code accomplishes this pre-processing.
+
+```{r ml2, echo = TRUE}
+#Remove variables containing more than 80% NAs
+nacols <- sapply(trainData, function(x) mean(is.na(x))) > 0.8
+trainData <- trainData[, nacols == F]
+cvData <- cvData[, nacols == F]
+testData <- testData[, nacols == F]
+print(dim(trainData))
+print(dim(cvData))
+print(dim(testData))
+
+# Remove Near-Zero-Variances
+nearzerocols <- nearZeroVar(trainData)
+
+trainData <- trainData[, -nearzerocols]
+cvData <- cvData[, -nearzerocols ]
+testData <- testData[, -nearzerocols]
+print(dim(trainData))
+
+#Remove the columns 1 to 6 since they don't contain any helpful data for estimation
+trainData <- trainData[, -(1:6)]
+cvData <- cvData[, -(1:6)]
+testData <- testData[, -(1:6)]
+print(dim(trainData))
+```
+
+## Training 
+
+For training, 3 models were considered:
+1. Decision Trees
+2. LDA
+3. Random Forests
+to train and predict the variable *classe*
+
+###Trees
+The function *train()* with method *"rpart"* is used for trianing with DecisionTtrees, on the training set.
+Then, predict is done on the validation set once only and its accuracy is seen. A plot of the decision tree is also given. 
+
+```{r ml3, echo = TRUE}
+set.seed(12345)
+fit_trees <- train(classe ~ ., method = "rpart", data = trainData)
+fancyRpartPlot(fit_trees$finalModel)
+```
+
+Fig 1: Plot showing the prediction values in the different branches of the Decision Tree
+
+```{r ml3a, echo = TRUE}
+predict_trees <- predict(fit_trees, newdata = cvData)   #  , type = "class")
+confmat_trees <- confusionMatrix(predict_trees, cvData$classe)
+oo_error_trees <- sum(predict_trees != cvData$classe)/length(predict_trees)
+print(confmat_trees)
+```
+
+###LDA
+Again, function *train()* with method as *"lda"* is used here. The code below does the training, predicts on the validation set and then finds the accuracy and out-of-sample error for *lda*
+
+```{r ml4, echo = TRUE}
+fit_lda <- train(classe ~ ., method = "lda", data = trainData)
+predict_lda <- predict(fit_lda, newdata = cvData)
+oo_error_lda <- sum(predict_lda != cvData$classe)/length(predict_lda)
+confmat_lda <- confusionMatrix(predict_lda, cvData$classe)
+print(confmat_lda)
+```
+
+###Random Forest
+For Random Forest, the funtion *randomForest* is used to train and predict *classe*.
+
+```{r ml5, echo = TRUE}
+fit_rf <- randomForest(classe ~ ., data = trainData)
+predict_rf <- predict(fit_rf, newdata = cvData)
+oo_error_rf <- sum(predict_rf != cvData$classe)/length(predict_rf)
+confmat_rf <- confusionMatrix(predict_rf, cvData$classe)
+print(confmat_rf)
+```
+
+##Method Selection
+We now compare the 3 methods using their *Confusion Matrices* and out of sample errors. The out of sample errors are shown below.
+
+```{r ml6, echo = TRUE}
+print("Out of Sample Errors")
+err_trees <- paste0("Trees: ", oo_error_trees)
+err_rf <- paste0("RF: ", oo_error_rf)
+err_lda <- paste0("LDA: ", oo_error_lda)
+print(err_trees)
+print(err_rf)
+print(err_lda)
+```
+
+We can draw the follwoing conclusions from the above: 
+
+1. Accuracy of Trees is 0.5781 and out-of-sample error of Trees is `r err_trees`
+2. Accuracy of LDA is and out-of-sample error of LDA is `r err_lda`
+3. Accuracy of Random Forests is 0.9971 and out-of-sample error is `r err_rf`
+
+It is clear from this, that the best ML method is RF. So, RF is used to predict the test output.
+
+```{r ml7, echo = TRUE}
+pred_rf_test <- predict(fit_rf, newdata = testData)
+print(pred_rf_test)
+```
+
+#Writing to file
+
+```{r ml8, echo = TRUE}
+sink("predicts_rf.txt")
+print(pred_rf_test)
+sink()
+```
